@@ -182,9 +182,89 @@
 
     .btn-danger:hover { background: #585b70; }
 
+    .btn-import {
+      background: #45475a;
+      color: #cdd6f4;
+    }
+
+    .btn-import:hover { background: #585b70; }
+
     .btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
+    }
+
+    /* ── Import modal ──────────────────────────────────────────── */
+
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      z-index: 2000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .modal-overlay.hidden { display: none; }
+
+    .modal-box {
+      background: #1e1e2e;
+      border: 1px solid #313244;
+      border-radius: 12px;
+      padding: 24px;
+      width: 100%;
+      max-width: 480px;
+      color: #cdd6f4;
+    }
+
+    .modal-box h3 {
+      font-size: 16px;
+      color: #f5f5f5;
+      margin-bottom: 8px;
+    }
+
+    .modal-desc {
+      font-size: 13px;
+      color: #a6adc8;
+      margin-bottom: 12px;
+    }
+
+    .modal-box textarea {
+      width: 100%;
+      background: #181825;
+      color: #89b4fa;
+      border: 1px solid #313244;
+      border-radius: 6px;
+      padding: 12px;
+      font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+      font-size: 13px;
+      resize: vertical;
+      outline: none;
+    }
+
+    .modal-box textarea:focus {
+      border-color: #89b4fa;
+    }
+
+    .import-error {
+      font-size: 12px;
+      color: #f38ba8;
+      min-height: 18px;
+      margin-top: 6px;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      justify-content: flex-end;
+    }
+
+    .modal-btn {
+      width: auto;
+      padding: 8px 20px;
     }
 
     #copy-feedback {
@@ -440,7 +520,22 @@
       </div>
       <div id="copy-feedback"></div>
       <button class="btn btn-primary" id="copy-btn" disabled>Copy to Clipboard</button>
+      <button class="btn btn-import" id="import-btn">Import JSON</button>
       <button class="btn btn-danger" id="clear-btn" disabled>Clear All</button>
+
+      <!-- Import modal -->
+      <div id="import-modal" class="modal-overlay hidden">
+        <div class="modal-box">
+          <h3>Import Selections</h3>
+          <p class="modal-desc">Paste a JSON array of IDs (same format as the copy output):</p>
+          <textarea id="import-textarea" placeholder='["20814", "20815", "20816"]' rows="8" spellcheck="false"></textarea>
+          <div id="import-error" class="import-error"></div>
+          <div class="modal-actions">
+            <button class="btn btn-danger modal-btn" id="import-cancel">Cancel</button>
+            <button class="btn btn-primary modal-btn" id="import-confirm">Import</button>
+          </div>
+        </div>
+      </div>
       <div id="map-coords"></div>
     </div>
   </div>
@@ -530,11 +625,17 @@
       const copyBtn       = document.getElementById('copy-btn');
       const clearBtn      = document.getElementById('clear-btn');
       const copyFeedback  = document.getElementById('copy-feedback');
-      const mapCoordsEl   = document.getElementById('map-coords');
-      const sidebar       = document.getElementById('sidebar');
-      const sidebarHeader = document.getElementById('sidebar-header');
-      const sidebarHandle = document.getElementById('sidebar-drag-handle');
-      const sidebarToggle = document.getElementById('sidebar-toggle');
+      const mapCoordsEl      = document.getElementById('map-coords');
+      const sidebar          = document.getElementById('sidebar');
+      const sidebarHeader    = document.getElementById('sidebar-header');
+      const sidebarHandle    = document.getElementById('sidebar-drag-handle');
+      const sidebarToggle    = document.getElementById('sidebar-toggle');
+      const importBtn        = document.getElementById('import-btn');
+      const importModal      = document.getElementById('import-modal');
+      const importTextarea   = document.getElementById('import-textarea');
+      const importError      = document.getElementById('import-error');
+      const importConfirm    = document.getElementById('import-confirm');
+      const importCancel     = document.getElementById('import-cancel');
 
       // ─── Mobile panel toggle ────────────────────────────────────────────
 
@@ -860,6 +961,95 @@
         }
         updateSidebar();
         clearSavedState();
+      });
+
+      // ─── Import modal ─────────────────────────────────────────────────
+
+      const openImportModal = () => {
+        importTextarea.value = '';
+        importError.textContent = '';
+        importModal.classList.remove('hidden');
+        importTextarea.focus();
+      };
+
+      const closeImportModal = () => {
+        importModal.classList.add('hidden');
+      };
+
+      const applyImport = (ids) => {
+        // Add imported IDs to selected set
+        const newIds = new Set(ids.map(String));
+
+        // Highlight matching polygons on the map
+        if (geoJsonLayer) {
+          geoJsonLayer.eachLayer((layer) => {
+            const id = layer.feature ? getFeatureId(layer.feature) : null;
+            if (id && newIds.has(id)) {
+              selectedItems.add(id);
+              layer.setStyle(selectedStyle);
+            }
+          });
+        }
+
+        // Also add IDs that don't match any current polygon (they stay in the set for export)
+        newIds.forEach(id => selectedItems.add(id));
+
+        updateSidebar();
+        saveState();
+      };
+
+      importBtn.addEventListener('click', openImportModal);
+      importCancel.addEventListener('click', closeImportModal);
+
+      // Close on backdrop click
+      importModal.addEventListener('click', (e) => {
+        if (e.target === importModal) closeImportModal();
+      });
+
+      // Close on Escape
+      importModal.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeImportModal();
+      });
+
+      importConfirm.addEventListener('click', () => {
+        const raw = importTextarea.value.trim();
+        if (!raw) {
+          importError.textContent = 'Paste a JSON array first.';
+          return;
+        }
+
+        let parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          importError.textContent = `Invalid JSON: ${e.message}`;
+          return;
+        }
+
+        if (!Array.isArray(parsed)) {
+          importError.textContent = 'Expected a JSON array (e.g. ["20814", "20815"]).';
+          return;
+        }
+
+        // Allow strings or numbers
+        const ids = parsed.map(item => {
+          if (typeof item === 'string') return item;
+          if (typeof item === 'number') return String(item);
+          return null;
+        });
+
+        if (ids.some(id => id === null)) {
+          importError.textContent = 'Array must contain only strings or numbers.';
+          return;
+        }
+
+        if (ids.length === 0) {
+          importError.textContent = 'Array is empty.';
+          return;
+        }
+
+        applyImport(ids);
+        closeImportModal();
       });
 
       // ─── Invalidate map size on resize ─────────────────────────────────
