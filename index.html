@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Map Selector</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -13,12 +13,16 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       display: flex;
       height: 100vh;
+      height: 100dvh;
       overflow: hidden;
     }
+
+    /* ── Map ────────────────────────────────────────────────────── */
 
     #map-container {
       flex: 1;
       position: relative;
+      min-width: 0;
     }
 
     #map { height: 100%; width: 100%; }
@@ -30,6 +34,7 @@
       z-index: 1000;
       display: flex;
       gap: 6px;
+      flex-wrap: wrap;
     }
 
     #state-selector, #mode-selector {
@@ -39,6 +44,7 @@
       padding: 6px 10px;
       font-size: 14px;
       cursor: pointer;
+      min-height: 36px;
     }
 
     #loading-overlay {
@@ -58,6 +64,8 @@
 
     #loading-overlay.hidden { display: none; }
 
+    /* ── Sidebar / Bottom sheet ──────────────────────────────────── */
+
     #sidebar {
       width: 280px;
       min-width: 280px;
@@ -69,15 +77,31 @@
       overflow: hidden;
     }
 
+    /* Drag handle — desktop: hidden */
+    #sidebar-drag-handle {
+      display: none;
+    }
+
+    /* Sidebar header row — desktop: normal block flow */
+    #sidebar-header {
+      display: block;
+      margin-bottom: 12px;
+    }
+
     #sidebar h2 {
       font-size: 18px;
-      margin-bottom: 12px;
       color: #f5f5f5;
+    }
+
+    /* Toggle button — desktop: hidden */
+    #sidebar-toggle {
+      display: none;
     }
 
     #zip-count {
       font-size: 13px;
       color: #a6adc8;
+      margin-top: 4px;
       margin-bottom: 12px;
     }
 
@@ -89,6 +113,7 @@
       padding: 12px;
       margin-bottom: 16px;
       border: 1px solid #313244;
+      min-height: 0; /* allow flex shrinking */
     }
 
     #zip-list {
@@ -117,6 +142,7 @@
       cursor: pointer;
       margin-bottom: 8px;
       transition: background 0.15s;
+      min-height: 44px;
     }
 
     .btn-primary {
@@ -174,6 +200,187 @@
       line-height: 1.6;
       user-select: all;
     }
+
+    /* ── Mobile (≤768px) ─────────────────────────────────────────── */
+
+    @media (max-width: 768px) {
+      body {
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      /* Map takes full screen; sheet overlays it */
+      #map-container {
+        position: fixed;
+        inset: 0;
+        height: 100%;
+        width: 100%;
+      }
+
+      /* ── Bottom sheet ── */
+      #sidebar {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        width: 100%;
+        min-width: 0;
+        height: 72vh;
+        max-height: 85vh;
+        border-radius: 16px 16px 0 0;
+        padding: 0 16px 20px;
+        /* Peek: show drag handle + header row (~64px) */
+        transform: translateY(calc(100% - 64px));
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        z-index: 1002;
+        box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.5);
+        overflow: hidden;
+      }
+
+      #sidebar.panel-open {
+        transform: translateY(0);
+      }
+
+      /* Drag handle */
+      #sidebar-drag-handle {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 20px;
+        cursor: pointer;
+        flex-shrink: 0;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      #sidebar-drag-handle::before {
+        content: '';
+        display: block;
+        width: 40px;
+        height: 4px;
+        background: #585b70;
+        border-radius: 2px;
+      }
+
+      /* Header row: title + count on left, toggle arrow on right */
+      #sidebar-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 0;
+        padding: 4px 0 10px;
+        cursor: pointer;
+        flex-shrink: 0;
+        -webkit-tap-highlight-color: transparent;
+        min-height: 44px;
+      }
+
+      #sidebar h2 {
+        font-size: 16px;
+        margin-bottom: 0;
+      }
+
+      #zip-count {
+        font-size: 12px;
+        margin: 0;
+        color: #a6adc8;
+      }
+
+      /* Title + count stacked in header */
+      #sidebar-header-text {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      /* Toggle chevron button */
+      #sidebar-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: none;
+        border: none;
+        color: #a6adc8;
+        font-size: 20px;
+        cursor: pointer;
+        padding: 0;
+        min-width: 44px;
+        min-height: 44px;
+        transition: transform 0.3s ease;
+        flex-shrink: 0;
+        line-height: 1;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      #sidebar.panel-open #sidebar-toggle {
+        transform: rotate(180deg);
+      }
+
+      /* Scrollable content area */
+      #sidebar-content {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      #zip-list-container {
+        flex: 1;
+        min-height: 0;
+        margin-bottom: 12px;
+      }
+
+      .btn {
+        min-height: 48px;
+        font-size: 15px;
+      }
+
+      /* Touch-friendly map controls */
+      #state-selector,
+      #mode-selector {
+        font-size: 16px; /* prevents iOS auto-zoom on focus */
+        min-height: 44px;
+        padding: 8px 12px;
+        border-radius: 6px;
+      }
+
+      /* Push controls right of zoom control */
+      #map-controls {
+        left: 54px;
+        top: 8px;
+        gap: 6px;
+        max-width: calc(100vw - 64px);
+      }
+
+      /* Leaflet zoom controls — bigger tap targets on mobile */
+      .leaflet-touch .leaflet-control-zoom a {
+        width: 36px;
+        height: 36px;
+        line-height: 36px;
+        font-size: 18px;
+      }
+
+      #map-coords {
+        display: none; /* hide coordinate readout on mobile — limited space */
+      }
+
+      #copy-feedback {
+        font-size: 13px;
+        height: 20px;
+      }
+    }
+
+    /* Very small screens (≤480px) */
+    @media (max-width: 480px) {
+      #sidebar {
+        height: 78vh;
+      }
+
+      #state-selector,
+      #mode-selector {
+        max-width: 140px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -189,16 +396,30 @@
     <div id="error-banner"></div>
     <div id="map"></div>
   </div>
+
   <div id="sidebar">
-    <h2 id="sidebar-title">Selected Tracts</h2>
-    <div id="zip-count">Count: 0</div>
-    <div id="zip-list-container">
-      <pre id="zip-list"><span id="empty-state">Click areas on the map to select them.</span></pre>
+    <!-- Mobile drag handle (tap or drag to toggle) -->
+    <div id="sidebar-drag-handle" role="button" aria-label="Toggle panel" tabindex="0"></div>
+
+    <!-- Header: always visible in peek state -->
+    <div id="sidebar-header" role="button" aria-expanded="false" tabindex="0">
+      <div id="sidebar-header-text">
+        <h2 id="sidebar-title">Selected Tracts</h2>
+        <div id="zip-count">Count: 0</div>
+      </div>
+      <button id="sidebar-toggle" aria-label="Toggle selection panel">&#8964;</button>
     </div>
-    <div id="copy-feedback"></div>
-    <button class="btn btn-primary" id="copy-btn" disabled>Copy to Clipboard</button>
-    <button class="btn btn-danger" id="clear-btn" disabled>Clear All</button>
-    <div id="map-coords"></div>
+
+    <!-- Scrollable content (zip list + buttons) -->
+    <div id="sidebar-content">
+      <div id="zip-list-container">
+        <pre id="zip-list"><span id="empty-state">Click areas on the map to select them.</span></pre>
+      </div>
+      <div id="copy-feedback"></div>
+      <button class="btn btn-primary" id="copy-btn" disabled>Copy to Clipboard</button>
+      <button class="btn btn-danger" id="clear-btn" disabled>Clear All</button>
+      <div id="map-coords"></div>
+    </div>
   </div>
 
   <script>
@@ -287,6 +508,55 @@
       const clearBtn      = document.getElementById('clear-btn');
       const copyFeedback  = document.getElementById('copy-feedback');
       const mapCoordsEl   = document.getElementById('map-coords');
+      const sidebar       = document.getElementById('sidebar');
+      const sidebarHeader = document.getElementById('sidebar-header');
+      const sidebarHandle = document.getElementById('sidebar-drag-handle');
+      const sidebarToggle = document.getElementById('sidebar-toggle');
+
+      // ─── Mobile panel toggle ────────────────────────────────────────────
+
+      const isMobile = () => window.innerWidth <= 768;
+
+      let panelOpen = false;
+
+      const openPanel = () => {
+        panelOpen = true;
+        sidebar.classList.add('panel-open');
+        sidebarHeader.setAttribute('aria-expanded', 'true');
+      };
+
+      const closePanel = () => {
+        panelOpen = false;
+        sidebar.classList.remove('panel-open');
+        sidebarHeader.setAttribute('aria-expanded', 'false');
+      };
+
+      const togglePanel = () => {
+        if (panelOpen) closePanel();
+        else openPanel();
+      };
+
+      // Toggle on header click (mobile only — on desktop these have no toggle behavior)
+      sidebarHeader.addEventListener('click', () => {
+        if (isMobile()) togglePanel();
+      });
+      sidebarHandle.addEventListener('click', () => {
+        if (isMobile()) togglePanel();
+      });
+      sidebarToggle.addEventListener('click', (e) => {
+        e.stopPropagation(); // prevent double-fire with header click
+        if (isMobile()) togglePanel();
+      });
+
+      // Keyboard accessibility for handle and header
+      [sidebarHandle, sidebarHeader].forEach(el => {
+        el.addEventListener('keydown', (e) => {
+          if ((e.key === 'Enter' || e.key === ' ') && isMobile()) {
+            e.preventDefault();
+            togglePanel();
+          }
+        });
+      });
 
       // ─── App state ─────────────────────────────────────────────────────
 
@@ -351,6 +621,11 @@
         const sorted = Array.from(selectedItems).sort();
         const json = JSON.stringify(sorted, null, 2);
         zipListEl.textContent = json;
+
+        // On mobile, auto-open the panel when something is selected
+        if (isMobile() && !panelOpen && count === 1) {
+          openPanel();
+        }
       };
 
       const updateModeUI = () => {
@@ -382,6 +657,7 @@
         const id = getFeatureId(feature);
         if (!id) return;
 
+        // Tooltip: shown on hover (desktop) — not shown on touch
         layer.bindTooltip(getTooltipText(feature), { sticky: true, className: 'zip-tooltip' });
 
         layer.on('mouseover', () => {
@@ -396,7 +672,11 @@
           }
         });
 
-        layer.on('click', () => {
+        layer.on('click', (e) => {
+          // Close bottom sheet on mobile so user can see the map after tapping
+          if (isMobile() && panelOpen) {
+            closePanel();
+          }
           if (selectedItems.has(id)) {
             selectedItems.delete(id);
             layer.setStyle(defaultStyle);
@@ -405,6 +685,7 @@
             layer.setStyle(selectedStyle);
           }
           updateSidebar();
+          L.DomEvent.stopPropagation(e);
         });
       };
 
@@ -496,6 +777,12 @@
           geoJsonLayer.eachLayer((layer) => layer.setStyle(defaultStyle));
         }
         updateSidebar();
+      });
+
+      // ─── Invalidate map size on resize ─────────────────────────────────
+
+      window.addEventListener('resize', () => {
+        map.invalidateSize();
       });
 
       // ─── Initial load ──────────────────────────────────────────────────
