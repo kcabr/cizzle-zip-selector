@@ -587,6 +587,47 @@
       let geoJsonLayer = null;
       let currentMode = 'tract'; // 'zip' or 'tract'
 
+      // ─── localStorage persistence ───────────────────────────────────────
+
+      const STORAGE_KEY = 'mapSelectorState';
+
+      const saveState = () => {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            state: stateSelect.value,
+            mode: currentMode,
+            selections: Array.from(selectedItems),
+          }));
+        } catch (e) {
+          console.warn('Failed to save state to localStorage:', e);
+        }
+      };
+
+      const clearSavedState = () => {
+        try {
+          localStorage.removeItem(STORAGE_KEY);
+        } catch (e) {
+          console.warn('Failed to clear localStorage:', e);
+        }
+      };
+
+      const loadSavedState = () => {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (!raw) return null;
+          const parsed = JSON.parse(raw);
+          if (typeof parsed !== 'object' || parsed === null) return null;
+          if (typeof parsed.state !== 'string') return null;
+          if (typeof parsed.mode !== 'string' || !['zip', 'tract'].includes(parsed.mode)) return null;
+          if (!Array.isArray(parsed.selections)) return null;
+          if (!STATES.find(s => s.file === parsed.state)) return null;
+          return parsed;
+        } catch (e) {
+          console.warn('Failed to load state from localStorage:', e);
+          return null;
+        }
+      };
+
       // ─── Map setup ─────────────────────────────────────────────────────
 
       const map = L.map('map', { zoomControl: true }).setView([39.0323, -77.1014], 11);
@@ -708,6 +749,7 @@
             layer.setStyle(selectedStyle);
           }
           updateSidebar();
+          saveState();
           L.DomEvent.stopPropagation(e);
         });
       };
@@ -728,7 +770,7 @@
         return STATES.find(s => s.file === val) || STATES.find(s => s.abbr === 'MD');
       };
 
-      const loadData = async () => {
+      const loadData = async (restoreSelections = null) => {
         showLoading();
         errorBanner.style.display = 'none';
 
@@ -754,6 +796,19 @@
             onEachFeature,
           }).addTo(map);
 
+          // Restore previously selected items (if any)
+          if (restoreSelections && restoreSelections.length > 0) {
+            const restoreSet = new Set(restoreSelections);
+            geoJsonLayer.eachLayer((layer) => {
+              const id = layer.feature ? getFeatureId(layer.feature) : null;
+              if (id && restoreSet.has(id)) {
+                selectedItems.add(id);
+                layer.setStyle(selectedStyle);
+              }
+            });
+            updateSidebar();
+          }
+
           map.fitBounds(geoJsonLayer.getBounds(), { padding: [20, 20] });
         } catch (err) {
           showError(`Failed to load ${label} boundaries: ${err.message}`);
@@ -772,11 +827,15 @@
         stateSelect.appendChild(opt);
       });
 
-      stateSelect.addEventListener('change', () => loadData());
+      stateSelect.addEventListener('change', () => {
+        saveState();
+        loadData();
+      });
 
       modeSelect.addEventListener('change', () => {
         currentMode = modeSelect.value;
         updateModeUI();
+        saveState();
         loadData();
       });
 
@@ -800,6 +859,7 @@
           geoJsonLayer.eachLayer((layer) => layer.setStyle(defaultStyle));
         }
         updateSidebar();
+        clearSavedState();
       });
 
       // ─── Invalidate map size on resize ─────────────────────────────────
@@ -810,8 +870,16 @@
 
       // ─── Initial load ──────────────────────────────────────────────────
 
+      const savedState = loadSavedState();
+      if (savedState) {
+        // Restore dropdowns to saved values
+        stateSelect.value = savedState.state;
+        currentMode = savedState.mode;
+        modeSelect.value = savedState.mode;
+      }
+
       updateModeUI();
-      loadData();
+      loadData(savedState ? savedState.selections : null);
 
       // ─── Service Worker registration ───────────────────────────────────
 
