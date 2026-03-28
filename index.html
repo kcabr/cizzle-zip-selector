@@ -189,6 +189,13 @@
 
     .btn-import:hover { background: #585b70; }
 
+    .btn-export-opposite {
+      background: #a6e3a1;
+      color: #1e1e2e;
+    }
+
+    .btn-export-opposite:hover { background: #94e2d5; }
+
     .btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
@@ -520,6 +527,7 @@
       </div>
       <div id="copy-feedback"></div>
       <button class="btn btn-primary" id="copy-btn" disabled>Copy to Clipboard</button>
+      <button class="btn btn-export-opposite" id="export-opposite-btn" disabled>Copy as Zips</button>
       <button class="btn btn-import" id="import-btn">Import JSON</button>
       <button class="btn btn-danger" id="clear-btn" disabled>Clear All</button>
 
@@ -630,6 +638,7 @@
       const sidebarHeader    = document.getElementById('sidebar-header');
       const sidebarHandle    = document.getElementById('sidebar-drag-handle');
       const sidebarToggle    = document.getElementById('sidebar-toggle');
+      const exportOppositeBtn = document.getElementById('export-opposite-btn');
       const importBtn        = document.getElementById('import-btn');
       const importModal      = document.getElementById('import-modal');
       const importTextarea   = document.getElementById('import-textarea');
@@ -773,6 +782,7 @@
         const count = selectedItems.size;
         zipCountEl.textContent = `Count: ${count}`;
         copyBtn.disabled = count === 0;
+        exportOppositeBtn.disabled = count === 0;
         clearBtn.disabled = count === 0;
 
         if (count === 0) {
@@ -795,6 +805,7 @@
 
       const updateModeUI = () => {
         sidebarTitle.textContent = currentMode === 'tract' ? 'Selected Tracts' : 'Selected Zips';
+        exportOppositeBtn.textContent = currentMode === 'tract' ? 'Copy as Zips' : 'Copy as Tracts';
         emptyStateEl.textContent = 'Click areas on the map to select them.';
       };
 
@@ -961,6 +972,117 @@
         }
         updateSidebar();
         clearSavedState();
+      });
+
+      // ─── Export opposite mode ─────────────────────────────────────────
+
+      const computeCentroid = (geometry) => {
+        let sumLng = 0, sumLat = 0, count = 0;
+        const addRing = (coords) => {
+          for (const [lng, lat] of coords) {
+            sumLng += lng;
+            sumLat += lat;
+            count++;
+          }
+        };
+        if (geometry.type === 'Polygon') {
+          addRing(geometry.coordinates[0]);
+        } else if (geometry.type === 'MultiPolygon') {
+          for (const polygon of geometry.coordinates) {
+            addRing(polygon[0]);
+          }
+        }
+        return count > 0 ? [sumLng / count, sumLat / count] : null;
+      };
+
+      const pointInRing = (point, ring) => {
+        const [x, y] = point;
+        let inside = false;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+          const [xi, yi] = ring[i];
+          const [xj, yj] = ring[j];
+          if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+            inside = !inside;
+          }
+        }
+        return inside;
+      };
+
+      const pointInGeometry = (point, geometry) => {
+        if (geometry.type === 'Polygon') {
+          return pointInRing(point, geometry.coordinates[0]);
+        }
+        if (geometry.type === 'MultiPolygon') {
+          return geometry.coordinates.some(poly => pointInRing(point, poly[0]));
+        }
+        return false;
+      };
+
+      exportOppositeBtn.addEventListener('click', async () => {
+        if (selectedItems.size === 0) return;
+
+        const state = getSelectedState();
+        const oppositeMode = currentMode === 'tract' ? 'zip' : 'tract';
+        const oppositeUrl = oppositeMode === 'tract' ? tractUrl(state.fips) : zipUrl(state.file);
+        const oppositeLabel = oppositeMode === 'tract' ? 'tracts' : 'zips';
+
+        exportOppositeBtn.disabled = true;
+        exportOppositeBtn.textContent = 'Loading…';
+        copyFeedback.textContent = '';
+
+        try {
+          const resp = await fetch(oppositeUrl);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const oppositeData = await resp.json();
+
+          // Collect geometries of selected features
+          const selectedGeometries = [];
+          if (geoJsonLayer) {
+            geoJsonLayer.eachLayer((layer) => {
+              const id = layer.feature ? getFeatureId(layer.feature) : null;
+              if (id && selectedItems.has(id) && layer.feature.geometry) {
+                selectedGeometries.push(layer.feature.geometry);
+              }
+            });
+          }
+
+          // Find opposite features whose centroid falls within any selected feature
+          const matchingIds = [];
+          const features = oppositeData.features || [];
+          for (const feature of features) {
+            if (!feature.geometry) continue;
+            const centroid = computeCentroid(feature.geometry);
+            if (!centroid) continue;
+
+            const isInside = selectedGeometries.some(geom => pointInGeometry(centroid, geom));
+            if (isInside) {
+              const props = feature.properties || {};
+              let id;
+              if (oppositeMode === 'tract') {
+                id = props.GEOID;
+              } else {
+                id = props.ZCTA5CE10 || props.ZIP || props.ZIPCODE || props.zip;
+              }
+              if (id) matchingIds.push(String(id));
+            }
+          }
+
+          const sorted = matchingIds.sort();
+          const json = JSON.stringify(sorted, null, 2);
+
+          try {
+            await navigator.clipboard.writeText(json);
+            copyFeedback.textContent = `Copied ${sorted.length} ${oppositeLabel}!`;
+          } catch {
+            copyFeedback.textContent = 'Copy failed — use HTTPS or localhost.';
+          }
+        } catch (err) {
+          copyFeedback.textContent = `Failed to load ${oppositeLabel}: ${err.message}`;
+        } finally {
+          exportOppositeBtn.disabled = selectedItems.size === 0;
+          exportOppositeBtn.textContent = currentMode === 'tract' ? 'Copy as Zips' : 'Copy as Tracts';
+          setTimeout(() => { copyFeedback.textContent = ''; }, 3000);
+        }
       });
 
       // ─── Import modal ─────────────────────────────────────────────────
