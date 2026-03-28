@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Zipcode Map Selector</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #map-container {
+      flex: 1;
+      position: relative;
+    }
+
+    #map { height: 100%; width: 100%; }
+
+    #state-selector {
+      position: absolute;
+      top: 10px;
+      left: 60px;
+      z-index: 1000;
+      background: #fff;
+      border: 2px solid rgba(0, 0, 0, 0.2);
+      border-radius: 4px;
+      padding: 6px 10px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    #loading-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(255, 255, 255, 0.8);
+      z-index: 1001;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      color: #333;
+    }
+
+    #loading-overlay.hidden { display: none; }
+
+    #sidebar {
+      width: 280px;
+      min-width: 280px;
+      background: #1e1e2e;
+      color: #cdd6f4;
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+      overflow: hidden;
+    }
+
+    #sidebar h2 {
+      font-size: 18px;
+      margin-bottom: 12px;
+      color: #f5f5f5;
+    }
+
+    #zip-count {
+      font-size: 13px;
+      color: #a6adc8;
+      margin-bottom: 12px;
+    }
+
+    #zip-list-container {
+      flex: 1;
+      overflow-y: auto;
+      background: #181825;
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 16px;
+      border: 1px solid #313244;
+    }
+
+    #zip-list {
+      font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: #89b4fa;
+    }
+
+    #empty-state {
+      color: #585b70;
+      font-style: italic;
+      font-size: 13px;
+    }
+
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      margin-bottom: 8px;
+      transition: background 0.15s;
+    }
+
+    .btn-primary {
+      background: #89b4fa;
+      color: #1e1e2e;
+    }
+
+    .btn-primary:hover { background: #74c7ec; }
+
+    .btn-danger {
+      background: #45475a;
+      color: #cdd6f4;
+    }
+
+    .btn-danger:hover { background: #585b70; }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    #copy-feedback {
+      font-size: 12px;
+      color: #a6e3a1;
+      text-align: center;
+      height: 18px;
+      margin-bottom: 4px;
+    }
+
+    #error-banner {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1002;
+      background: #f38ba8;
+      color: #1e1e2e;
+      padding: 10px 20px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      display: none;
+      max-width: 500px;
+      text-align: center;
+    }
+
+    #map-coords {
+      font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+      font-size: 11px;
+      color: #585b70;
+      text-align: center;
+      padding-top: 10px;
+      border-top: 1px solid #313244;
+      margin-top: 8px;
+      line-height: 1.6;
+      user-select: all;
+    }
+  </style>
+</head>
+<body>
+  <div id="map-container">
+    <select id="state-selector"></select>
+    <div id="loading-overlay" class="hidden">Loading zip code boundaries…</div>
+    <div id="error-banner"></div>
+    <div id="map"></div>
+  </div>
+  <div id="sidebar">
+    <h2>Selected Zips</h2>
+    <div id="zip-count">Count: 0</div>
+    <div id="zip-list-container">
+      <pre id="zip-list"><span id="empty-state">Click zip codes on the map to select them.</span></pre>
+    </div>
+    <div id="copy-feedback"></div>
+    <button class="btn btn-primary" id="copy-btn" disabled>Copy to Clipboard</button>
+    <button class="btn btn-danger" id="clear-btn" disabled>Clear All</button>
+    <div id="map-coords"></div>
+  </div>
+
+  <script>
+    (() => {
+      'use strict';
+
+      // ─── State list & GeoJSON URL builder ───────────────────────────────
+      //
+      // Data source: OpenDataDE/State-zip-code-GeoJSON on GitHub
+      // https://github.com/OpenDataDE/State-zip-code-GeoJSON
+      //
+      // Each file is a minified GeoJSON of ZCTA (Zip Code Tabulation Area)
+      // boundaries derived from US Census TIGER/Line shapefiles.
+      //
+      // To change the data source, edit the `geoJsonUrl()` function below.
+      // The zip code property name used in feature.properties is ZCTA5CE10.
+
+      const STATES = [
+        { abbr: 'AL', name: 'Alabama',              file: 'al_alabama' },
+        { abbr: 'AK', name: 'Alaska',               file: 'ak_alaska' },
+        { abbr: 'AZ', name: 'Arizona',              file: 'az_arizona' },
+        { abbr: 'AR', name: 'Arkansas',              file: 'ar_arkansas' },
+        { abbr: 'CA', name: 'California',            file: 'ca_california' },
+        { abbr: 'CO', name: 'Colorado',              file: 'co_colorado' },
+        { abbr: 'CT', name: 'Connecticut',           file: 'ct_connecticut' },
+        { abbr: 'DE', name: 'Delaware',              file: 'de_delaware' },
+        { abbr: 'DC', name: 'District of Columbia',  file: 'dc_district_of_columbia' },
+        { abbr: 'FL', name: 'Florida',               file: 'fl_florida' },
+        { abbr: 'GA', name: 'Georgia',               file: 'ga_georgia' },
+        { abbr: 'HI', name: 'Hawaii',                file: 'hi_hawaii' },
+        { abbr: 'ID', name: 'Idaho',                 file: 'id_idaho' },
+        { abbr: 'IL', name: 'Illinois',              file: 'il_illinois' },
+        { abbr: 'IN', name: 'Indiana',               file: 'in_indiana' },
+        { abbr: 'IA', name: 'Iowa',                  file: 'ia_iowa' },
+        { abbr: 'KS', name: 'Kansas',                file: 'ks_kansas' },
+        { abbr: 'KY', name: 'Kentucky',              file: 'ky_kentucky' },
+        { abbr: 'LA', name: 'Louisiana',             file: 'la_louisiana' },
+        { abbr: 'ME', name: 'Maine',                 file: 'me_maine' },
+        { abbr: 'MD', name: 'Maryland',              file: 'md_maryland' },
+        { abbr: 'MA', name: 'Massachusetts',         file: 'ma_massachusetts' },
+        { abbr: 'MI', name: 'Michigan',              file: 'mi_michigan' },
+        { abbr: 'MN', name: 'Minnesota',             file: 'mn_minnesota' },
+        { abbr: 'MS', name: 'Mississippi',           file: 'ms_mississippi' },
+        { abbr: 'MO', name: 'Missouri',              file: 'mo_missouri' },
+        { abbr: 'MT', name: 'Montana',               file: 'mt_montana' },
+        { abbr: 'NE', name: 'Nebraska',              file: 'ne_nebraska' },
+        { abbr: 'NV', name: 'Nevada',                file: 'nv_nevada' },
+        { abbr: 'NH', name: 'New Hampshire',         file: 'nh_new_hampshire' },
+        { abbr: 'NJ', name: 'New Jersey',            file: 'nj_new_jersey' },
+        { abbr: 'NM', name: 'New Mexico',            file: 'nm_new_mexico' },
+        { abbr: 'NY', name: 'New York',              file: 'ny_new_york' },
+        { abbr: 'NC', name: 'North Carolina',        file: 'nc_north_carolina' },
+        { abbr: 'ND', name: 'North Dakota',          file: 'nd_north_dakota' },
+        { abbr: 'OH', name: 'Ohio',                  file: 'oh_ohio' },
+        { abbr: 'OK', name: 'Oklahoma',              file: 'ok_oklahoma' },
+        { abbr: 'OR', name: 'Oregon',                file: 'or_oregon' },
+        { abbr: 'PA', name: 'Pennsylvania',          file: 'pa_pennsylvania' },
+        { abbr: 'RI', name: 'Rhode Island',          file: 'ri_rhode_island' },
+        { abbr: 'SC', name: 'South Carolina',        file: 'sc_south_carolina' },
+        { abbr: 'SD', name: 'South Dakota',          file: 'sd_south_dakota' },
+        { abbr: 'TN', name: 'Tennessee',             file: 'tn_tennessee' },
+        { abbr: 'TX', name: 'Texas',                 file: 'tx_texas' },
+        { abbr: 'UT', name: 'Utah',                  file: 'ut_utah' },
+        { abbr: 'VT', name: 'Vermont',               file: 'vt_vermont' },
+        { abbr: 'VA', name: 'Virginia',              file: 'va_virginia' },
+        { abbr: 'WA', name: 'Washington',            file: 'wa_washington' },
+        { abbr: 'WV', name: 'West Virginia',         file: 'wv_west_virginia' },
+        { abbr: 'WI', name: 'Wisconsin',             file: 'wi_wisconsin' },
+        { abbr: 'WY', name: 'Wyoming',               file: 'wy_wyoming' },
+      ];
+
+      const BASE_URL = 'https://raw.githubusercontent.com/OpenDataDE/State-zip-code-GeoJSON/master';
+
+      const geoJsonUrl = (stateFile) =>
+        `${BASE_URL}/${stateFile}_zip_codes_geo.min.json`;
+
+      // ─── DOM refs ───────────────────────────────────────────────────────
+
+      const stateSelect   = document.getElementById('state-selector');
+      const loadingEl     = document.getElementById('loading-overlay');
+      const errorBanner   = document.getElementById('error-banner');
+      const zipListEl     = document.getElementById('zip-list');
+      const emptyStateEl  = document.getElementById('empty-state');
+      const zipCountEl    = document.getElementById('zip-count');
+      const copyBtn       = document.getElementById('copy-btn');
+      const clearBtn      = document.getElementById('clear-btn');
+      const copyFeedback  = document.getElementById('copy-feedback');
+      const mapCoordsEl   = document.getElementById('map-coords');
+
+      // ─── App state ─────────────────────────────────────────────────────
+
+      const selectedZips = new Set();
+      let geoJsonLayer = null;
+
+      // ─── Map setup ─────────────────────────────────────────────────────
+
+      const map = L.map('map', { zoomControl: true }).setView([39.0323, -77.1014], 11);
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 19,
+      }).addTo(map);
+
+      // ─── Coordinates display ───────────────────────────────────────────
+
+      const updateCoords = () => {
+        const c = map.getCenter();
+        const z = map.getZoom();
+        mapCoordsEl.textContent = `Lat: ${c.lat.toFixed(4)}  Lng: ${c.lng.toFixed(4)}  Zoom: ${z}`;
+      };
+      map.on('moveend', updateCoords);
+      updateCoords();
+
+      // ─── Styles ────────────────────────────────────────────────────────
+
+      const defaultStyle = {
+        color: '#555',
+        weight: 1,
+        fillColor: '#e0e0e0',
+        fillOpacity: 0.1,
+      };
+
+      const hoverStyle = {
+        fillColor: '#ffd866',
+        fillOpacity: 0.35,
+      };
+
+      const selectedStyle = {
+        fillColor: '#3388ff',
+        fillOpacity: 0.5,
+      };
+
+      // ─── Sidebar rendering ─────────────────────────────────────────────
+
+      const updateSidebar = () => {
+        const count = selectedZips.size;
+        zipCountEl.textContent = `Count: ${count}`;
+        copyBtn.disabled = count === 0;
+        clearBtn.disabled = count === 0;
+
+        if (count === 0) {
+          zipListEl.innerHTML = '';
+          zipListEl.appendChild(emptyStateEl);
+          emptyStateEl.style.display = 'block';
+          return;
+        }
+
+        emptyStateEl.style.display = 'none';
+        const sorted = Array.from(selectedZips).sort();
+        const json = JSON.stringify(sorted, null, 2);
+        zipListEl.textContent = json;
+      };
+
+      // ─── Feature interaction ────────────────────────────────────────────
+
+      const getZip = (feature) => {
+        const props = feature.properties || {};
+        return props.ZCTA5CE10 || props.ZIP || props.ZIPCODE || props.zip || null;
+      };
+
+      const onEachFeature = (feature, layer) => {
+        const zip = getZip(feature);
+        if (!zip) return;
+
+        layer.bindTooltip(zip, { sticky: true, className: 'zip-tooltip' });
+
+        layer.on('mouseover', () => {
+          if (!selectedZips.has(zip)) {
+            layer.setStyle(hoverStyle);
+          }
+        });
+
+        layer.on('mouseout', () => {
+          if (!selectedZips.has(zip)) {
+            layer.setStyle(defaultStyle);
+          }
+        });
+
+        layer.on('click', () => {
+          if (selectedZips.has(zip)) {
+            selectedZips.delete(zip);
+            layer.setStyle(defaultStyle);
+          } else {
+            selectedZips.add(zip);
+            layer.setStyle(selectedStyle);
+          }
+          updateSidebar();
+        });
+      };
+
+      // ─── State loading ─────────────────────────────────────────────────
+
+      const showLoading = () => loadingEl.classList.remove('hidden');
+      const hideLoading = () => loadingEl.classList.add('hidden');
+
+      const showError = (msg) => {
+        errorBanner.textContent = msg;
+        errorBanner.style.display = 'block';
+        setTimeout(() => { errorBanner.style.display = 'none'; }, 6000);
+      };
+
+      const loadState = async (stateFile) => {
+        showLoading();
+        errorBanner.style.display = 'none';
+
+        // Clear previous data
+        selectedZips.clear();
+        updateSidebar();
+        if (geoJsonLayer) {
+          map.removeLayer(geoJsonLayer);
+          geoJsonLayer = null;
+        }
+
+        try {
+          const url = geoJsonUrl(stateFile);
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+          const data = await resp.json();
+
+          geoJsonLayer = L.geoJSON(data, {
+            style: defaultStyle,
+            onEachFeature,
+          }).addTo(map);
+
+          map.fitBounds(geoJsonLayer.getBounds(), { padding: [20, 20] });
+        } catch (err) {
+          showError(`Failed to load zip boundaries: ${err.message}`);
+        } finally {
+          hideLoading();
+        }
+      };
+
+      // ─── State dropdown ─────────────────────────────────────────────────
+
+      STATES.forEach(({ abbr, name, file }) => {
+        const opt = document.createElement('option');
+        opt.value = file;
+        opt.textContent = `${abbr} — ${name}`;
+        if (abbr === 'MD') opt.selected = true;
+        stateSelect.appendChild(opt);
+      });
+
+      stateSelect.addEventListener('change', () => {
+        loadState(stateSelect.value);
+      });
+
+      // ─── Copy / Clear buttons ───────────────────────────────────────────
+
+      copyBtn.addEventListener('click', async () => {
+        const sorted = Array.from(selectedZips).sort();
+        const json = JSON.stringify(sorted, null, 2);
+        try {
+          await navigator.clipboard.writeText(json);
+          copyFeedback.textContent = 'Copied!';
+        } catch {
+          copyFeedback.textContent = 'Copy failed — use HTTPS or localhost.';
+        }
+        setTimeout(() => { copyFeedback.textContent = ''; }, 2000);
+      });
+
+      clearBtn.addEventListener('click', () => {
+        selectedZips.clear();
+        if (geoJsonLayer) {
+          geoJsonLayer.eachLayer((layer) => layer.setStyle(defaultStyle));
+        }
+        updateSidebar();
+      });
+
+      // ─── Initial load ──────────────────────────────────────────────────
+
+      loadState('md_maryland');
+    })();
+  </script>
+</body>
+</html>
