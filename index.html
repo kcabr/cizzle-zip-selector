@@ -196,6 +196,31 @@
 
     .btn-export-opposite:hover { background: #94e2d5; }
 
+    .btn-share {
+      background: #cba6f7;
+      color: #1e1e2e;
+    }
+
+    .btn-share:hover { background: #b4befe; }
+
+    .undo-redo-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .undo-redo-row .btn {
+      flex: 1;
+      margin-bottom: 0;
+    }
+
+    .btn-undo {
+      background: #45475a;
+      color: #cdd6f4;
+    }
+
+    .btn-undo:hover { background: #585b70; }
+
     .btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
@@ -529,6 +554,11 @@
       <button class="btn btn-primary" id="copy-btn" disabled>Copy to Clipboard</button>
       <button class="btn btn-export-opposite" id="export-opposite-btn" disabled>Copy as Zips</button>
       <button class="btn btn-import" id="import-btn">Import JSON</button>
+      <button class="btn btn-share" id="share-btn" disabled>Share URL</button>
+      <div class="undo-redo-row">
+        <button class="btn btn-undo" id="undo-btn" disabled title="Undo (Ctrl+Z)">↩ Undo</button>
+        <button class="btn btn-undo" id="redo-btn" disabled title="Redo (Ctrl+Shift+Z)">↪ Redo</button>
+      </div>
       <button class="btn btn-danger" id="clear-btn" disabled>Clear All</button>
 
       <!-- Import modal -->
@@ -639,6 +669,9 @@
       const sidebarHandle    = document.getElementById('sidebar-drag-handle');
       const sidebarToggle    = document.getElementById('sidebar-toggle');
       const exportOppositeBtn = document.getElementById('export-opposite-btn');
+      const shareBtn         = document.getElementById('share-btn');
+      const undoBtn          = document.getElementById('undo-btn');
+      const redoBtn          = document.getElementById('redo-btn');
       const importBtn        = document.getElementById('import-btn');
       const importModal      = document.getElementById('import-modal');
       const importTextarea   = document.getElementById('import-textarea');
@@ -696,6 +729,63 @@
       const selectedItems = new Set();
       let geoJsonLayer = null;
       let currentMode = 'tract'; // 'zip' or 'tract'
+
+      // ─── Undo / Redo ───────────────────────────────────────────────────
+
+      const MAX_UNDO = 50;
+      const undoStack = [];  // previous states (arrays of IDs)
+      const redoStack = [];
+      let undoRedoActive = false; // flag to prevent pushUndo during undo/redo apply
+
+      const snapshotSelections = () => Array.from(selectedItems).sort();
+
+      const pushUndo = () => {
+        if (undoRedoActive) return;
+        undoStack.push(snapshotSelections());
+        if (undoStack.length > MAX_UNDO) undoStack.shift();
+        redoStack.length = 0; // clear redo on new action
+        updateUndoRedoButtons();
+      };
+
+      const updateUndoRedoButtons = () => {
+        undoBtn.disabled = undoStack.length === 0;
+        redoBtn.disabled = redoStack.length === 0;
+      };
+
+      const applySelectionSnapshot = (snapshot) => {
+        undoRedoActive = true;
+        selectedItems.clear();
+        snapshot.forEach(id => selectedItems.add(id));
+
+        // Update map styles
+        if (geoJsonLayer) {
+          geoJsonLayer.eachLayer((layer) => {
+            const id = layer.feature ? getFeatureId(layer.feature) : null;
+            if (id) {
+              layer.setStyle(selectedItems.has(id) ? selectedStyle : defaultStyle);
+            }
+          });
+        }
+
+        updateSidebar();
+        saveState();
+        updateUndoRedoButtons();
+        undoRedoActive = false;
+      };
+
+      const doUndo = () => {
+        if (undoStack.length === 0) return;
+        redoStack.push(snapshotSelections());
+        const prev = undoStack.pop();
+        applySelectionSnapshot(prev);
+      };
+
+      const doRedo = () => {
+        if (redoStack.length === 0) return;
+        undoStack.push(snapshotSelections());
+        const next = redoStack.pop();
+        applySelectionSnapshot(next);
+      };
 
       // ─── localStorage persistence ───────────────────────────────────────
 
@@ -783,6 +873,7 @@
         zipCountEl.textContent = `Count: ${count}`;
         copyBtn.disabled = count === 0;
         exportOppositeBtn.disabled = count === 0;
+        shareBtn.disabled = count === 0;
         clearBtn.disabled = count === 0;
 
         if (count === 0) {
@@ -840,12 +931,14 @@
           if (!selectedItems.has(id)) {
             layer.setStyle(hoverStyle);
           }
+          layer.openTooltip();
         });
 
         layer.on('mouseout', () => {
           if (!selectedItems.has(id)) {
             layer.setStyle(defaultStyle);
           }
+          layer.closeTooltip();
         });
 
         layer.on('click', (e) => {
@@ -853,6 +946,7 @@
           if (isMobile() && panelOpen) {
             closePanel();
           }
+          pushUndo();
           if (selectedItems.has(id)) {
             selectedItems.delete(id);
             layer.setStyle(defaultStyle);
@@ -862,6 +956,7 @@
           }
           updateSidebar();
           saveState();
+          updateUndoRedoButtons();
           L.DomEvent.stopPropagation(e);
         });
       };
@@ -966,11 +1061,13 @@
       });
 
       clearBtn.addEventListener('click', () => {
+        pushUndo();
         selectedItems.clear();
         if (geoJsonLayer) {
           geoJsonLayer.eachLayer((layer) => layer.setStyle(defaultStyle));
         }
         updateSidebar();
+        updateUndoRedoButtons();
         clearSavedState();
       });
 
@@ -1099,6 +1196,7 @@
       };
 
       const applyImport = (ids) => {
+        pushUndo();
         // Add imported IDs to selected set
         const newIds = new Set(ids.map(String));
 
@@ -1118,6 +1216,7 @@
 
         updateSidebar();
         saveState();
+        updateUndoRedoButtons();
       };
 
       importBtn.addEventListener('click', openImportModal);
@@ -1174,6 +1273,81 @@
         closeImportModal();
       });
 
+      // ─── Undo / Redo button listeners + keyboard shortcuts ─────────────
+
+      undoBtn.addEventListener('click', doUndo);
+      redoBtn.addEventListener('click', doRedo);
+
+      document.addEventListener('keydown', (e) => {
+        // Don't trigger when typing in an input/textarea
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
+        if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+          if (e.key === 'z' && !e.shiftKey) {
+            e.preventDefault();
+            doUndo();
+          } else if ((e.key === 'z' && e.shiftKey) || e.key === 'y') {
+            e.preventDefault();
+            doRedo();
+          }
+        }
+      });
+
+      // ─── Share URL ─────────────────────────────────────────────────────
+
+      const encodeShareUrl = () => {
+        const state = getSelectedState();
+        const sorted = Array.from(selectedItems).sort();
+        const params = new URLSearchParams();
+        params.set('s', state.file);
+        params.set('m', currentMode);
+        params.set('v', sorted.join(','));
+        return `${window.location.origin}${window.location.pathname}?${params.toString()}`;
+      };
+
+      const parseShareUrl = () => {
+        const params = new URLSearchParams(window.location.search);
+        const stateFile = params.get('s');
+        const mode = params.get('m');
+        const ids = params.get('v');
+
+        if (!stateFile || !mode || !ids) return null;
+        if (!['zip', 'tract'].includes(mode)) return null;
+        if (!STATES.find(s => s.file === stateFile)) return null;
+
+        const idList = ids.split(',').map(s => s.trim()).filter(Boolean);
+        if (idList.length === 0) return null;
+
+        return { state: stateFile, mode, selections: idList };
+      };
+
+      shareBtn.addEventListener('click', async () => {
+        const url = encodeShareUrl();
+
+        // Try native share first (mobile), fall back to clipboard
+        if (navigator.share) {
+          try {
+            await navigator.share({ title: 'Map Selections', url });
+            copyFeedback.textContent = 'Shared!';
+            setTimeout(() => { copyFeedback.textContent = ''; }, 2000);
+            return;
+          } catch (e) {
+            // User cancelled or share failed — fall through to clipboard
+            if (e.name === 'AbortError') return;
+          }
+        }
+
+        try {
+          await navigator.clipboard.writeText(url);
+          copyFeedback.textContent = 'Share URL copied!';
+        } catch {
+          // Fallback: show URL in a prompt
+          window.prompt('Copy this share URL:', url);
+          copyFeedback.textContent = '';
+        }
+        setTimeout(() => { copyFeedback.textContent = ''; }, 2000);
+      });
+
       // ─── Invalidate map size on resize ─────────────────────────────────
 
       window.addEventListener('resize', () => {
@@ -1182,12 +1356,19 @@
 
       // ─── Initial load ──────────────────────────────────────────────────
 
-      const savedState = loadSavedState();
+      // Share URL takes priority over localStorage
+      const sharedState = parseShareUrl();
+      const savedState = sharedState || loadSavedState();
+
       if (savedState) {
-        // Restore dropdowns to saved values
         stateSelect.value = savedState.state;
         currentMode = savedState.mode;
         modeSelect.value = savedState.mode;
+      }
+
+      // Clean share params from URL bar (so bookmarking/refreshing uses localStorage)
+      if (sharedState) {
+        window.history.replaceState(null, '', window.location.pathname);
       }
 
       updateModeUI();
